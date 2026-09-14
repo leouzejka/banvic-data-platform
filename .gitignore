@@ -3,6 +3,8 @@
 .venv-*/
 .meltano/
 
+terraform.tfvars
+
 dbt_banvic/target/
 dbt_banvic/logs/
 dbt_banvic/dbt_packages/

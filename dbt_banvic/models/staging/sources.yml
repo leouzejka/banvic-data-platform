@@ -5,3 +5,16 @@ sources:
     schema: raw
     tables:
       - name: agencias
+        columns:
+          - name: cod_agencia
+            data_tests:
+              - not_null
+              - unique
+
+          - name: nome
+            data_tests:
+              - not_null
+
+          - name: uf
+            data_tests:
+              - not_null
