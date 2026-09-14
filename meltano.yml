@@ -1,0 +1,33 @@
+default_environment: dev
+project_id: 01a0a0b3-ca3e-7f4c-a28d-423336bec84a
+environments:
+- name: dev
+  config:
+    plugins:
+      extractors:
+      - name: tap-csv
+        config:
+          csv_files_definition: meltano/csv_files_definition.json
+        select:
+        - '*.*'
+      loaders:
+      - name: target-postgres
+        config:
+          host: localhost
+          port: 5432
+          database: banvic_database
+          user: banvic
+          default_target_schema: raw
+- name: staging
+- name: prod
+plugins:
+  extractors:
+  - name: tap-csv
+    variant: meltanolabs
+    pip_url: git+https://github.com/MeltanoLabs/tap-csv.git
+    select:
+    - '*.*'
+  loaders:
+  - name: target-postgres
+    variant: meltanolabs
+    pip_url: meltanolabs-target-postgres

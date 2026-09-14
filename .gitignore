@@ -1,0 +1,14 @@
+.env
+.venv/
+.venv-*/
+.meltano/
+
+dbt_banvic/target/
+dbt_banvic/logs/
+dbt_banvic/dbt_packages/
+
+__pycache__/
+*.py[cod]
+
+.DS_Store
+Thumbs.db
