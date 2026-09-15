@@ -1,0 +1,45 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: airflow
+  namespace: banvic
+spec:
+  replicas: 1
+
+  selector:
+    matchLabels:
+      app: airflow
+
+  template:
+    metadata:
+      labels:
+        app: airflow
+
+    spec:
+      containers:
+        - name: airflow
+          image: banvic-airflow:3.3.1
+          imagePullPolicy: IfNotPresent
+
+          command:
+            - airflow
+            - api-server
+
+          ports:
+            - containerPort: 8080
+
+          env:
+            - name: AIRFLOW__DATABASE__SQL_ALCHEMY_CONN
+              value: "postgresql+psycopg2://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@banvic-postgres:5432/airflow"
+            - name: AIRFLOW__CORE__FERNET_KEY
+              value: "$(AIRFLOW_FERNET_KEY)"
+            - name: AIRFLOW__CORE__EXECUTION_API_SERVER_URL
+              value: "http://airflow:8080/execution/"
+            - name: TARGET_POSTGRES_PASSWORD
+              value: "$(TARGET_POSTGRES_PASSWORD)"
+            - name: AIRFLOW__CORE__EXECUTOR
+              value: "LocalExecutor"
+            - name: AIRFLOW__API_AUTH__JWT_SECRET
+              value: "$(AIRFLOW_JWT_SECRET)"
+            - name: AIRFLOW__API__SECRET_KEY
+              value: "$(AIRFLOW_API_SECRET_KEY)"

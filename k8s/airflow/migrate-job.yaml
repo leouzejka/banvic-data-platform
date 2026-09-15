@@ -1,0 +1,34 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: airflow-db-migrate
+  namespace: banvic
+spec:
+  backoffLimit: 3
+
+  template:
+    spec:
+      restartPolicy: OnFailure
+
+      containers:
+        - name: airflow-migrate
+          image: banvic-airflow:3.3.1
+          imagePullPolicy: IfNotPresent
+
+          command:
+            - airflow
+            - db
+            - migrate
+
+          env:
+            - name: AIRFLOW__DATABASE__SQL_ALCHEMY_CONN
+              value: "postgresql+psycopg2://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@banvic-postgres:5432/airflow"
+
+            - name: AIRFLOW__CORE__EXECUTOR
+              value: "LocalExecutor"
+
+            - name: AIRFLOW__CORE__EXECUTION_API_SERVER_URL
+              value: "http://airflow:8080/execution/"
+
+            - name: AIRFLOW__CORE__FERNET_KEY
+              value: "$(AIRFLOW_FERNET_KEY)" 

@@ -1,8 +1,12 @@
-.env
 .venv/
 .venv-*/
 .meltano/
+.tmp/
 
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
 terraform.tfvars
 
 dbt_banvic/target/

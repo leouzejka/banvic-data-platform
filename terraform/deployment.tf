@@ -1,0 +1,112 @@
+resource "kubernetes_deployment" "postgres" {
+  wait_for_rollout = false
+
+  metadata {
+    name      = "banvic-postgres"
+    namespace = kubernetes_namespace.banvic.metadata[0].name
+  }
+
+  spec {
+    replicas = 1
+
+    selector {
+      match_labels = {
+        app = "banvic-postgres"
+      }
+    }
+
+    template {
+      metadata {
+        labels = {
+          app = "banvic-postgres"
+        }
+      }
+
+      spec {
+        automount_service_account_token = false
+        enable_service_links            = false
+
+        container {
+          name  = "postgres"
+          image = "postgres:16-alpine"
+
+          port {
+            container_port = 5432
+          }
+
+          env {
+            name = "POSTGRES_DB"
+
+            value_from {
+              secret_key_ref {
+                name = kubernetes_secret.postgres.metadata[0].name
+                key  = "POSTGRES_DB"
+              }
+            }
+          }
+
+          env {
+            name = "POSTGRES_USER"
+
+            value_from {
+              secret_key_ref {
+                name = kubernetes_secret.postgres.metadata[0].name
+                key  = "POSTGRES_USER"
+              }
+            }
+          }
+
+          env {
+            name = "POSTGRES_PASSWORD"
+
+            value_from {
+              secret_key_ref {
+                name = kubernetes_secret.postgres.metadata[0].name
+                key  = "POSTGRES_PASSWORD"
+              }
+            }
+          }
+
+          volume_mount {
+            name       = "postgres-data"
+            mount_path = "/var/lib/postgresql/data"
+          }
+
+          readiness_probe {
+            exec {
+              command = [
+                "sh",
+                "-c",
+                "pg_isready -U \"$POSTGRES_USER\" -d \"$POSTGRES_DB\""
+              ]
+            }
+
+            initial_delay_seconds = 10
+            period_seconds        = 5
+          }
+
+          liveness_probe {
+            exec {
+              command = [
+                "sh",
+                "-c",
+                "pg_isready -U \"$POSTGRES_USER\" -d \"$POSTGRES_DB\""
+              ]
+            }
+
+            initial_delay_seconds = 30
+            period_seconds        = 10
+          }
+        }
+
+        volume {
+          name = "postgres-data"
+
+          persistent_volume_claim {
+            claim_name = kubernetes_persistent_volume_claim.postgres.metadata[0].name
+          }
+        }
+      }
+    }
+  }
+}

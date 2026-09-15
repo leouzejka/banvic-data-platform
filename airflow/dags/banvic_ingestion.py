@@ -4,7 +4,7 @@ from airflow import DAG
 from airflow.providers.standard.operators.bash import BashOperator
 
 
-PROJECT_DIR = "/home/oliveiralu/desafio/banvic-data-platform"
+PROJECT_DIR = "/opt/airflow"
 
 default_args = {
     "retries": 2,
@@ -21,8 +21,10 @@ with DAG(
     tags=["banvic", "ingestion"],
 ) as dag:
 
+
     ingestao_meltano = BashOperator(
         task_id="ingestao_meltano",
-        bash_command="meltano --environment=dev run tap-csv target-postgres",
+        bash_command="meltano --environment=k8s run tap-csv target-postgres",
         cwd=PROJECT_DIR,
+        append_env=True,
     )
