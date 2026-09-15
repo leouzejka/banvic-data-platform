@@ -6,9 +6,9 @@ endif
 KIND_CLUSTER := banvic
 KIND_CONTEXT := kind-$(KIND_CLUSTER)
 
-.PHONY: deps run airflow airflow-image env env-test kind-check terraform-apply airflow-manifests airflow-apply postgres-wait airflow-wait scheduler-wait dag-processor-wait migration-wait
+.PHONY: deps run kind-check airflow-image terraform-apply postgres-wait metadata-manifest metadata-init airflow airflow-manifests airflow-apply migration-wait airflow-wait scheduler-wait dag-processor-wait
 
-run: deps kind-check airflow-image terraform-apply postgres-wait airflow-apply migration-wait airflow-wait scheduler-wait dag-processor-wait
+run: deps kind-check airflow-image terraform-apply postgres-wait metadata-init airflow-apply migration-wait airflow-wait scheduler-wait dag-processor-wait
 	@echo "Cluster Kubernetes e infraestrutura prontos."
 
 deps:
@@ -143,3 +143,23 @@ airflow:
 	echo "Pressione Ctrl+C para encerrar."; \
 	echo ""; \
 	kubectl port-forward -n banvic deployment/airflow 8080:8080
+
+metadata-manifest:
+	@mkdir -p .tmp/k8s/postgres
+	@kubectl create configmap banvic-metadata-init \
+		--namespace banvic \
+		--from-file=001_metadata.sql=postgres/init/001_metadata.sql \
+		--dry-run=client \
+		-o yaml > .tmp/k8s/postgres/metadata-init-configmap.yaml
+	@echo "ConfigMap de metadata renderizado."
+
+metadata-init: metadata-manifest postgres-wait
+	@kubectl apply -f .tmp/k8s/postgres/metadata-init-configmap.yaml
+	@kubectl delete job banvic-metadata-init -n banvic --ignore-not-found
+	@kubectl apply -f k8s/postgres/metadata-init-job.yaml
+	@kubectl wait \
+		--for=condition=complete \
+		job/banvic-metadata-init \
+		-n banvic \
+		--timeout=120s
+	@echo "Metadata do pipeline inicializado."

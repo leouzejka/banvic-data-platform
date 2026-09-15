@@ -1,0 +1,43 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: banvic-metadata-init
+  namespace: banvic
+spec:
+  backoffLimit: 3
+
+  template:
+    spec:
+      restartPolicy: OnFailure
+
+      containers:
+        - name: metadata-init
+          image: postgres:16-alpine
+
+          env:
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: banvic-postgres-secret
+                  key: POSTGRES_PASSWORD
+
+          command:
+            - sh
+            - -c
+            - |
+              psql \
+                -h banvic-postgres \
+                -U banvic \
+                -d banvic_database \
+                -v ON_ERROR_STOP=1 \
+                -f /sql/001_metadata.sql
+
+          volumeMounts:
+            - name: metadata-sql
+              mountPath: /sql
+              readOnly: true
+
+      volumes:
+        - name: metadata-sql
+          configMap:
+            name: banvic-metadata-init
