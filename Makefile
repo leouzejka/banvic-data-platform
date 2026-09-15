@@ -6,10 +6,19 @@ endif
 KIND_CLUSTER := banvic
 KIND_CONTEXT := kind-$(KIND_CLUSTER)
 
-.PHONY: run env env-test kind-check terraform-apply airflow-manifests airflow-apply postgres-wait airflow-wait scheduler-wait dag-processor-wait migration-wait
+.PHONY: deps run airflow airflow-image env env-test kind-check terraform-apply airflow-manifests airflow-apply postgres-wait airflow-wait scheduler-wait dag-processor-wait migration-wait
 
-run: kind-check terraform-apply postgres-wait airflow-apply migration-wait airflow-wait scheduler-wait dag-processor-wait
+run: deps kind-check airflow-image terraform-apply postgres-wait airflow-apply migration-wait airflow-wait scheduler-wait dag-processor-wait
 	@echo "Cluster Kubernetes e infraestrutura prontos."
+
+deps:
+	@echo "Verificando dependências..."
+	@command -v docker >/dev/null || (echo "Docker não encontrado." && exit 1)
+	@command -v kind >/dev/null || (echo "Kind não encontrado." && exit 1)
+	@command -v kubectl >/dev/null || (echo "kubectl não encontrado." && exit 1)
+	@command -v terraform >/dev/null || (echo "Terraform não encontrado." && exit 1)
+	@command -v make >/dev/null || (echo "Make não encontrado." && exit 1)
+	@echo "Todas as dependências estão disponíveis."
 
 airflow-apply: airflow-manifests
 	@echo "Aplicando Airflow..."
@@ -48,6 +57,14 @@ kind-check:
 	@kubectl wait --for=condition=Ready node --all --timeout=120s >/dev/null
 	@echo "Contexto Kubernetes: $(KIND_CONTEXT)"
 	@echo "Node Kubernetes: Ready"
+
+airflow-image:
+	@echo "Construindo imagem do Airflow..."
+	@docker build -t banvic-airflow:3.3.1 -f docker/airflow/Dockerfile .
+	@echo "Carregando imagem no cluster Kind..."
+	@kind load docker-image banvic-airflow:3.3.1 --name $(KIND_CLUSTER)
+	@echo "Imagem do Airflow disponível no Kind."
+
 
 airflow-manifests:
 	@mkdir -p .tmp/k8s/airflow
@@ -109,3 +126,20 @@ migration-wait:
 		-n banvic \
 		--timeout=120s
 	@echo "Migração do banco Airflow concluída."
+
+airflow:
+	@AIRFLOW_USER=$$(kubectl exec -n banvic deployment/airflow -- \
+		airflow config get-value core simple_auth_manager_users | cut -d: -f1); \
+	AIRFLOW_PASSWORD=$$(kubectl exec -n banvic deployment/airflow -- \
+		python -c 'import json; print(json.load(open("/opt/airflow/simple_auth_manager_passwords.json.generated"))["'$${AIRFLOW_USER}'"])'); \
+	echo ""; \
+	echo "======================================"; \
+	echo "              AIRFLOW"; \
+	echo "======================================"; \
+	echo "URL:      http://localhost:8080"; \
+	echo "Usuário:  $${AIRFLOW_USER}"; \
+	echo "Senha:    $${AIRFLOW_PASSWORD}"; \
+	echo "======================================"; \
+	echo "Pressione Ctrl+C para encerrar."; \
+	echo ""; \
+	kubectl port-forward -n banvic deployment/airflow 8080:8080
