@@ -3,6 +3,11 @@
 .meltano/
 .tmp/
 
+.env
+airflow/airflow.db
+airflow/logs/
+airflow/simple_auth_manager_passwords.json.generated
+
 .terraform/
 *.tfstate
 *.tfstate.*

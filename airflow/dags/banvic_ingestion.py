@@ -209,7 +209,7 @@ with DAG(
         ],
         in_cluster=True,
         get_logs=True,
-        on_finish_action="keep_pod",
+        on_finish_action="delete_pod",
         automount_service_account_token=False,
         startup_timeout_seconds=300,
         do_xcom_push=False,
