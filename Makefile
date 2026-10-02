@@ -10,19 +10,26 @@ POSTGRES_PORT ?= 5432
 AIRFLOW_DB ?= airflow
 export POSTGRES_HOST
 
-.PHONY: deps run kind-check airflow-image meltano-image terraform-apply airflow airflow-manifests airflow-apply migration-wait airflow-wait scheduler-wait dag-processor-wait
+.PHONY: deps run postgres dag-run kind-check airflow-image meltano-image terraform-apply airflow airflow-manifests airflow-apply migration-wait airflow-wait scheduler-wait dag-processor-wait
 
-run: deps kind-check airflow-image meltano-image terraform-apply airflow-apply migration-wait airflow-wait scheduler-wait dag-processor-wait
+run: deps postgres kind-check airflow-image meltano-image terraform-apply airflow-apply migration-wait airflow-wait scheduler-wait dag-processor-wait
 	@echo "Cluster Kubernetes e infraestrutura prontos."
 
 deps:
 	@echo "Verificando dependências..."
 	@command -v docker >/dev/null || (echo "Docker não encontrado." && exit 1)
+	@docker compose version >/dev/null 2>&1 || (echo "Docker Compose não encontrado." && exit 1)
 	@command -v kind >/dev/null || (echo "Kind não encontrado." && exit 1)
 	@command -v kubectl >/dev/null || (echo "kubectl não encontrado." && exit 1)
 	@command -v terraform >/dev/null || (echo "Terraform não encontrado." && exit 1)
 	@command -v make >/dev/null || (echo "Make não encontrado." && exit 1)
 	@echo "Todas as dependências estão disponíveis."
+
+postgres:
+	@docker compose up -d postgres
+
+dag-run:
+	@kubectl exec -n banvic deployment/airflow -- airflow dags trigger -o json banvic_ingestion
 
 airflow-apply: airflow-manifests
 	@echo "Aplicando Airflow..."
