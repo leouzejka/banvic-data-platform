@@ -21,23 +21,48 @@ A solução foi construída para demonstrar:
 CSV
  │
  ▼
-Meltano
- │
- ▼
-PostgreSQL
- ├── raw
- ├── metadata
- └── analytics
-       ▲
-       │
-    Airflow
+Airflow no Kubernetes/Kind
        │
        ▼
- Kubernetes
-       ▲
-       │
-   Terraform
+Pod efêmero do Meltano
+       │ TCP
+       ▼
+PostgreSQL persistente
+ ├── banco airflow
+ └── banco banvic_database
+       ├── raw
+       ├── metadata
+       └── analytics
 ```
+
+## Contrato do PostgreSQL
+
+O PostgreSQL é persistente e independente do ciclo de vida do cluster Kind.
+Airflow e Meltano acessam o banco por TCP usando o host e a porta do ambiente;
+o endereço não deve depender de um Service ou Pod do Meltano.
+
+O contrato lógico é:
+
+| Banco | Responsabilidade |
+|---|---|
+| `airflow` | Metadata database do Airflow |
+| `banvic_database` | Dados do desafio |
+
+O banco `banvic_database` deve possuir os schemas:
+
+- `raw`: dados carregados pelo Meltano;
+- `metadata`: controle das execuções do pipeline;
+- `analytics`: dados validados e transformados.
+
+No desenvolvimento local, o Docker Compose pode fornecer uma instância
+persistentemente armazenada do PostgreSQL. No Kind, os componentes devem
+consumir uma instância PostgreSQL persistente por TCP, sem recriá-la a cada
+execução do cluster.
+
+Na demonstração local com Kind, o Makefile usa o gateway da rede Docker
+`kind` como `POSTGRES_HOST`, alcançando a porta `5432` publicada pelo Compose.
+Esse endereço é descoberto no momento da renderização dos manifests e pode
+ser substituído por um hostname ou IP TCP através da variável `POSTGRES_HOST`.
 
 ### Fluxo
 
@@ -47,7 +72,7 @@ PostgreSQL
 4. O Airflow orquestra a execução do Meltano.
 5. PostgreSQL atua como destino da ingestão.
 6. Kubernetes executa os componentes da solução.
-7. Terraform provisiona a infraestrutura PostgreSQL.
+7. Terraform provisiona somente a infraestrutura necessária do Kubernetes.
 
 ## Stack
 
@@ -85,11 +110,10 @@ banvic-data-platform/
 ├── meltano/
 │   └── csv_files_definition.json
 ├── postgres/
-│   └── deployment.yaml
+│   └── init/
 ├── terraform/
-│   ├── deployment.tf
-│   ├── pvc.tf
-│   └── service.tf
+│   ├── main.tf
+│   └── namespace.tf
 ├── .env
 ├── Makefile
 ├── meltano.yml
@@ -115,11 +139,14 @@ make run
 O comando:
 
 1. verifica ou cria o cluster Kind;
-2. aplica a infraestrutura PostgreSQL via Terraform;
-3. aguarda o PostgreSQL;
-4. renderiza e aplica os manifests do Airflow;
-5. executa a migration do banco do Airflow;
-6. aguarda API Server, Scheduler e DAG Processor.
+2. aplica somente a infraestrutura Kubernetes via Terraform;
+3. renderiza e aplica os manifests do Airflow;
+4. executa a migration do banco do Airflow;
+5. aguarda API Server, Scheduler e DAG Processor.
+
+O PostgreSQL precisa estar disponível antes da execução do comando. O host,
+porta, usuário, banco do desafio e banco de metadata do Airflow são definidos
+no ambiente; o Kind não cria nem armazena o PostgreSQL.
 
 ### Acessar o Airflow
 

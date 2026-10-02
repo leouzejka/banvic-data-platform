@@ -5,12 +5,12 @@ import os
 
 from airflow import DAG
 from airflow.exceptions import AirflowException
-from airflow.providers.standard.operators.bash import BashOperator
+from airflow.providers.cncf.kubernetes.operators.pod import KubernetesPodOperator
 from airflow.providers.standard.operators.python import PythonOperator
 from airflow.utils.trigger_rule import TriggerRule
+from kubernetes.client import models as k8s
 
 
-PROJECT_DIR = "/opt/airflow"
 PIPELINE_NAME = "banvic_ingestion"
 
 default_args = {
@@ -21,8 +21,8 @@ default_args = {
 
 def get_database_connection():
     return psycopg2.connect(
-        host="banvic-postgres",
-        port=5432,
+        host=os.environ.get("TARGET_POSTGRES_HOST", "localhost"),
+        port=os.environ.get("TARGET_POSTGRES_PORT", "5432"),
         database=os.environ["POSTGRES_DB"],
         user=os.environ["POSTGRES_USER"],
         password=os.environ["TARGET_POSTGRES_PASSWORD"],
@@ -68,14 +68,16 @@ def registrar_inicio(**context):
 
 def finalizar_execucao(**context):
     execution_id = context["run_id"]
-    task_instance = context["task_instance"]
     finished_at = datetime.now()
 
-    upstream_task = task_instance.get_dagrun().get_task_instance(
-        task_id="ingestao_meltano"
+    task_states = context["task_instance"].get_task_states(
+        dag_id=context["dag"].dag_id,
+        task_ids=["ingestao_meltano"],
+        run_ids=[context["run_id"]],
     )
+    upstream_state = task_states[context["run_id"]]["ingestao_meltano"]
 
-    if upstream_task.state == "success":
+    if upstream_state == "success":
         status = "SUCCESS"
         error_message = None
 
@@ -142,7 +144,7 @@ def finalizar_execucao(**context):
     status = "FAILED"
     error_message = (
         f"Tarefa ingestao_meltano terminou com estado: "
-        f"{upstream_task.state}"
+        f"{upstream_state}"
     )
 
     conn = get_database_connection()
@@ -190,11 +192,27 @@ with DAG(
         python_callable=registrar_inicio,
     )
 
-    ingestao_meltano = BashOperator(
+    ingestao_meltano = KubernetesPodOperator(
         task_id="ingestao_meltano",
-        bash_command="meltano --environment=k8s run tap-csv target-postgres",
-        cwd=PROJECT_DIR,
-        append_env=True,
+        name="meltano-ingestion",
+        namespace="banvic",
+        image="banvic-meltano:4.2.2",
+        image_pull_policy="IfNotPresent",
+        cmds=["meltano"],
+        arguments=["--environment=k8s", "run", "tap-csv", "target-postgres"],
+        env_from=[
+            k8s.V1EnvFromSource(
+                secret_ref=k8s.V1SecretEnvSource(
+                    name="banvic-postgres-connection",
+                ),
+            ),
+        ],
+        in_cluster=True,
+        get_logs=True,
+        on_finish_action="keep_pod",
+        automount_service_account_token=False,
+        startup_timeout_seconds=300,
+        do_xcom_push=False,
     )
 
     finalize_execution = PythonOperator(

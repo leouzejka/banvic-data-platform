@@ -13,6 +13,7 @@ spec:
       labels:
         app: airflow-scheduler
     spec:
+      serviceAccountName: airflow-scheduler
       containers:
         - name: scheduler
           image: banvic-airflow:3.3.1
@@ -22,7 +23,7 @@ spec:
             - scheduler
           env:
             - name: AIRFLOW__DATABASE__SQL_ALCHEMY_CONN
-              value: "postgresql+psycopg2://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@banvic-postgres:5432/airflow"
+              value: "postgresql+psycopg2://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@$(POSTGRES_HOST):$(POSTGRES_PORT)/$(AIRFLOW_DB)"
 
             - name: AIRFLOW__CORE__EXECUTOR
               value: "LocalExecutor"
@@ -33,12 +34,19 @@ spec:
             - name: AIRFLOW__CORE__FERNET_KEY
               value: "$(AIRFLOW_FERNET_KEY)"
 
+            - name: POSTGRES_DB
+              value: "$(POSTGRES_DB)"
+            - name: POSTGRES_USER
+              value: "$(POSTGRES_USER)"
             - name: TARGET_POSTGRES_PASSWORD
               value: "$(TARGET_POSTGRES_PASSWORD)"
+            - name: TARGET_POSTGRES_HOST
+              value: "$(POSTGRES_HOST)"
+            - name: TARGET_POSTGRES_PORT
+              value: "$(POSTGRES_PORT)"
 
             - name: TARGET_POSTGRES_SQLALCHEMY_URL
-              value: "postgresql+psycopg://$(POSTGRES_USER):$(TARGET_POSTGRES_PASSWORD)@banvic-postgres:5432/$(POSTGRES_DB)"
-            
+              value: "postgresql+psycopg://$(POSTGRES_USER):$(TARGET_POSTGRES_PASSWORD)@$(POSTGRES_HOST):$(POSTGRES_PORT)/$(POSTGRES_DB)"
             - name: AIRFLOW__API_AUTH__JWT_SECRET
               value: "$(AIRFLOW_JWT_SECRET)"
 
@@ -47,5 +55,3 @@ spec:
 
             - name: AIRFLOW__CORE__HOSTNAME_CALLABLE
               value: airflow.utils.net.get_host_ip_address
-            
-            

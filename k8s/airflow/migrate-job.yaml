@@ -22,7 +22,7 @@ spec:
 
           env:
             - name: AIRFLOW__DATABASE__SQL_ALCHEMY_CONN
-              value: "postgresql+psycopg2://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@banvic-postgres:5432/airflow"
+              value: "postgresql+psycopg2://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@$(POSTGRES_HOST):$(POSTGRES_PORT)/$(AIRFLOW_DB)"
 
             - name: AIRFLOW__CORE__EXECUTOR
               value: "LocalExecutor"
@@ -31,4 +31,4 @@ spec:
               value: "http://airflow:8080/execution/"
 
             - name: AIRFLOW__CORE__FERNET_KEY
-              value: "$(AIRFLOW_FERNET_KEY)" 
+              value: "$(AIRFLOW_FERNET_KEY)"

@@ -5,10 +5,14 @@ endif
 
 KIND_CLUSTER := banvic
 KIND_CONTEXT := kind-$(KIND_CLUSTER)
+POSTGRES_HOST ?=
+POSTGRES_PORT ?= 5432
+AIRFLOW_DB ?= airflow
+export POSTGRES_HOST
 
-.PHONY: deps run kind-check airflow-image terraform-apply postgres-wait metadata-manifest metadata-init airflow airflow-manifests airflow-apply migration-wait airflow-wait scheduler-wait dag-processor-wait
+.PHONY: deps run kind-check airflow-image meltano-image terraform-apply airflow airflow-manifests airflow-apply migration-wait airflow-wait scheduler-wait dag-processor-wait
 
-run: deps kind-check airflow-image terraform-apply postgres-wait metadata-init airflow-apply migration-wait airflow-wait scheduler-wait dag-processor-wait
+run: deps kind-check airflow-image meltano-image terraform-apply airflow-apply migration-wait airflow-wait scheduler-wait dag-processor-wait
 	@echo "Cluster Kubernetes e infraestrutura prontos."
 
 deps:
@@ -22,6 +26,8 @@ deps:
 
 airflow-apply: airflow-manifests
 	@echo "Aplicando Airflow..."
+	@kubectl apply -f .tmp/k8s/airflow/rbac.yaml
+	@kubectl apply -f .tmp/k8s/airflow/postgres-secret.yaml
 	@kubectl apply -f .tmp/k8s/airflow/deployment.yaml
 	@kubectl apply -f .tmp/k8s/airflow/scheduler.yaml
 	@kubectl apply -f .tmp/k8s/airflow/dag-processor.yaml
@@ -31,20 +37,18 @@ airflow-apply: airflow-manifests
 
 terraform-apply:
 	@echo "Aplicando infraestrutura Terraform..."
-	@cd terraform && \
-		TF_VAR_postgres_password="$(POSTGRES_PASSWORD)" \
-		terraform init -input=false && \
-		TF_VAR_postgres_password="$(POSTGRES_PASSWORD)" \
-		terraform apply -auto-approve -input=false
+	@cd terraform && terraform init -input=false && terraform apply -auto-approve -input=false
 
 env:
+	@echo "POSTGRES_HOST=$(POSTGRES_HOST)"
 	@echo "POSTGRES_DB=$(POSTGRES_DB)"
+	@echo "AIRFLOW_DB=$(AIRFLOW_DB)"
 	@echo "POSTGRES_USER=$(POSTGRES_USER)"
 	@echo "POSTGRES_PORT=$(POSTGRES_PORT)"
 	@echo "TARGET_POSTGRES_PASSWORD=***"
 
 env-test:
-	@env | grep -E '^(POSTGRES_DB|POSTGRES_USER|POSTGRES_PORT|TARGET_POSTGRES_PASSWORD)='
+	@env | grep -E '^(POSTGRES_HOST|POSTGRES_DB|AIRFLOW_DB|POSTGRES_USER|POSTGRES_PORT|TARGET_POSTGRES_PASSWORD)='
 
 kind-check:
 	@if kind get clusters 2>/dev/null | grep -qx "$(KIND_CLUSTER)"; then \
@@ -65,16 +69,31 @@ airflow-image:
 	@kind load docker-image banvic-airflow:3.3.1 --name $(KIND_CLUSTER)
 	@echo "Imagem do Airflow disponível no Kind."
 
+meltano-image:
+	@echo "Construindo imagem do Meltano..."
+	@docker build -t banvic-meltano:4.2.2 -f docker/meltano/Dockerfile .
+	@echo "Carregando imagem no cluster Kind..."
+	@kind load docker-image banvic-meltano:4.2.2 --name $(KIND_CLUSTER)
+	@echo "Imagem do Meltano disponível no Kind."
+
 
 airflow-manifests:
 	@mkdir -p .tmp/k8s/airflow
-	@for file in k8s/airflow/*.yaml; do \
+	@POSTGRES_HOST="$${POSTGRES_HOST:-$$(docker network inspect kind --format '{{range .IPAM.Config}}{{.Gateway}} {{end}}' 2>/dev/null | grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}' | tail -n1)}"; \
+	if [ -z "$${POSTGRES_HOST}" ]; then \
+		echo "Gateway da rede Docker kind não encontrado; defina POSTGRES_HOST."; \
+		exit 1; \
+	fi; \
+	for file in k8s/airflow/*.yaml; do \
 		sed \
+			-e "s|\$$(POSTGRES_HOST)|$${POSTGRES_HOST}|g" \
+			-e "s|\$$(POSTGRES_PORT)|$${POSTGRES_PORT}|g" \
+			-e "s|\$$(AIRFLOW_DB)|$${AIRFLOW_DB}|g" \
 			-e "s|\$$(POSTGRES_USER)|$${POSTGRES_USER}|g" \
 			-e "s|\$$(POSTGRES_DB)|$${POSTGRES_DB}|g" \
 			-e "s|\$$(POSTGRES_PASSWORD)|$${POSTGRES_PASSWORD}|g" \
 			-e "s|\$$(TARGET_POSTGRES_PASSWORD)|$${TARGET_POSTGRES_PASSWORD}|g" \
-			-e "s|\$$(TARGET_POSTGRES_SQLALCHEMY_URL)|postgresql+psycopg://$${POSTGRES_USER}:$${TARGET_POSTGRES_PASSWORD}@banvic-postgres:5432/$${POSTGRES_DB}|g" \
+			-e "s|\$$(TARGET_POSTGRES_SQLALCHEMY_URL)|postgresql+psycopg://$${POSTGRES_USER}:$${TARGET_POSTGRES_PASSWORD}@$${POSTGRES_HOST}:$${POSTGRES_PORT}/$${POSTGRES_DB}|g" \
 			-e "s|\$$(AIRFLOW_FERNET_KEY)|$${AIRFLOW_FERNET_KEY}|g" \
 			-e "s|\$$(AIRFLOW_JWT_SECRET)|$${AIRFLOW_JWT_SECRET}|g" \
 			-e "s|\$$(AIRFLOW_API_SECRET_KEY)|$${AIRFLOW_API_SECRET_KEY}|g" \
@@ -82,15 +101,6 @@ airflow-manifests:
 	done
 	@echo "Manifests Airflow renderizados em .tmp/k8s/airflow/"
 	
-postgres-wait:
-	@echo "Aguardando PostgreSQL..."
-	@kubectl wait \
-		--for=condition=Available \
-		deployment/banvic-postgres \
-		-n banvic \
-		--timeout=120s
-	@echo "PostgreSQL pronto."
-
 airflow-wait:
 	@echo "Aguardando Airflow API Server..."
 	@kubectl wait \
@@ -143,23 +153,3 @@ airflow:
 	echo "Pressione Ctrl+C para encerrar."; \
 	echo ""; \
 	kubectl port-forward -n banvic deployment/airflow 8080:8080
-
-metadata-manifest:
-	@mkdir -p .tmp/k8s/postgres
-	@kubectl create configmap banvic-metadata-init \
-		--namespace banvic \
-		--from-file=001_metadata.sql=postgres/init/001_metadata.sql \
-		--dry-run=client \
-		-o yaml > .tmp/k8s/postgres/metadata-init-configmap.yaml
-	@echo "ConfigMap de metadata renderizado."
-
-metadata-init: metadata-manifest postgres-wait
-	@kubectl apply -f .tmp/k8s/postgres/metadata-init-configmap.yaml
-	@kubectl delete job banvic-metadata-init -n banvic --ignore-not-found
-	@kubectl apply -f k8s/postgres/metadata-init-job.yaml
-	@kubectl wait \
-		--for=condition=complete \
-		job/banvic-metadata-init \
-		-n banvic \
-		--timeout=120s
-	@echo "Metadata do pipeline inicializado."
