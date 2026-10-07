@@ -144,6 +144,15 @@ O comando:
 4. executa a migration do banco do Airflow;
 5. aguarda API Server, Scheduler e DAG Processor.
 
+Antes da primeira execução, crie o arquivo de configuração:
+
+```bash
+cp .env.example .env
+```
+
+Preencha as senhas e os três segredos do Airflow no `.env`. O target `run`
+interrompe a execução caso alguma dessas variáveis obrigatórias esteja vazia.
+
 O PostgreSQL precisa estar disponível antes da execução do comando. O host,
 porta, usuário, banco do desafio e banco de metadata do Airflow são definidos
 no ambiente; o Kind não cria nem armazena o PostgreSQL.
@@ -174,7 +183,9 @@ ingestao_meltano
 Meltano
         │
         ▼
-PostgreSQL
+Validação raw
+        ▼
+analytics.saldo_por_agencia
 ```
 
 ### Validar os dados
@@ -188,6 +199,11 @@ A DAG `banvic_ingestion` executa o Meltano utilizando:
 ```text
 tap-csv → target-postgres
 ```
+
+Depois da ingestão, a própria DAG valida que as tabelas foram carregadas, que
+as chaves não são nulas nem duplicadas e publica a tabela
+`analytics.saldo_por_agencia`. A tabela analítica é recriada de forma
+idempotente a cada execução.
 
 As sete tabelas fornecidas pelo desafio são carregadas na camada `raw`:
 
@@ -236,7 +252,7 @@ Total:
 
 ### Qualidade dos dados
 
-Foram realizadas validações de:
+São executadas automaticamente na task `validar_raw` validações de:
 
 - duplicidade das chaves;
 - valores `NULL` nas chaves;
@@ -245,6 +261,10 @@ Foram realizadas validações de:
 - valores financeiros.
 
 Os registros órfãos encontrados na fonte são preservados na camada `raw`, mantendo a representação original dos dados recebidos.
+
+O Compose fornece o PostgreSQL persistente usado no desenvolvimento e na
+demonstração com Kind. O fluxo oficial da arquitetura é executado no Kind;
+Meltano não é mantido como serviço permanente.
 
 ## Status
 
@@ -259,5 +279,6 @@ Os registros órfãos encontrados na fonte são preservados na camada `raw`, man
 - [x] Retry
 - [x] Idempotência
 - [x] Validação dos dados
+- [x] Camada analytics
 - [x] Automação com Makefile
 - [x] Documentação inicial

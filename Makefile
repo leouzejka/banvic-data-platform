@@ -10,9 +10,9 @@ POSTGRES_PORT ?= 5432
 AIRFLOW_DB ?= airflow
 export POSTGRES_HOST
 
-.PHONY: deps run postgres dag-run kind-check airflow-image meltano-image terraform-apply airflow airflow-manifests airflow-apply migration-wait airflow-wait scheduler-wait dag-processor-wait
+.PHONY: deps check-env run postgres postgres-wait dag-run kind-check airflow-image meltano-image terraform-apply airflow airflow-manifests airflow-apply migration-wait airflow-wait scheduler-wait dag-processor-wait
 
-run: deps postgres kind-check airflow-image meltano-image terraform-apply airflow-apply migration-wait airflow-wait scheduler-wait dag-processor-wait
+run: deps check-env postgres postgres-wait kind-check airflow-image meltano-image terraform-apply airflow-apply migration-wait airflow-wait scheduler-wait dag-processor-wait
 	@echo "Cluster Kubernetes e infraestrutura prontos."
 
 deps:
@@ -25,8 +25,31 @@ deps:
 	@command -v make >/dev/null || (echo "Make não encontrado." && exit 1)
 	@echo "Todas as dependências estão disponíveis."
 
+check-env:
+	@test -n "$(POSTGRES_DB)" || (echo "Variável obrigatória não definida: POSTGRES_DB" && exit 1)
+	@test -n "$(AIRFLOW_DB)" || (echo "Variável obrigatória não definida: AIRFLOW_DB" && exit 1)
+	@test -n "$(POSTGRES_USER)" || (echo "Variável obrigatória não definida: POSTGRES_USER" && exit 1)
+	@test -n "$(POSTGRES_PASSWORD)" || (echo "Variável obrigatória não definida: POSTGRES_PASSWORD" && exit 1)
+	@test -n "$(TARGET_POSTGRES_PASSWORD)" || (echo "Variável obrigatória não definida: TARGET_POSTGRES_PASSWORD" && exit 1)
+	@test -n "$(AIRFLOW_FERNET_KEY)" || (echo "Variável obrigatória não definida: AIRFLOW_FERNET_KEY" && exit 1)
+	@test -n "$(AIRFLOW_JWT_SECRET)" || (echo "Variável obrigatória não definida: AIRFLOW_JWT_SECRET" && exit 1)
+	@test -n "$(AIRFLOW_API_SECRET_KEY)" || (echo "Variável obrigatória não definida: AIRFLOW_API_SECRET_KEY" && exit 1)
+
 postgres:
 	@docker compose up -d postgres
+
+postgres-wait:
+	@echo "Aguardando PostgreSQL..."
+	@for attempt in $$(seq 1 30); do \
+		if docker compose exec -T postgres pg_isready -U "$(POSTGRES_USER)" -d "$(POSTGRES_DB)" >/dev/null 2>&1; then \
+			echo "PostgreSQL pronto."; \
+			exit 0; \
+		fi; \
+		sleep 2; \
+	done; \
+	echo "PostgreSQL não ficou disponível a tempo."; \
+	docker compose logs postgres; \
+	exit 1
 
 dag-run:
 	@kubectl exec -n banvic deployment/airflow -- airflow dags trigger -o json banvic_ingestion

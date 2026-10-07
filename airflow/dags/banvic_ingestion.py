@@ -1,7 +1,8 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+
+import os
 
 import psycopg2
-import os
 
 from airflow import DAG
 from airflow.exceptions import AirflowException
@@ -12,6 +13,16 @@ from kubernetes.client import models as k8s
 
 
 PIPELINE_NAME = "banvic_ingestion"
+
+RAW_TABLES = {
+    "agencias": ["cod_agencia"],
+    "clientes": ["cod_cliente"],
+    "colaborador_agencia": ["cod_colaborador", "cod_agencia"],
+    "colaboradores": ["cod_colaborador"],
+    "conta": ["num_conta"],
+    "proposta_credito": ["cod_proposta"],
+    "transacoes": ["cod_transacao"],
+}
 
 default_args = {
     "retries": 2,
@@ -66,18 +77,110 @@ def registrar_inicio(**context):
         conn.close()
 
 
+def validar_raw():
+    """Valida presença, chaves nulas e duplicidades na carga raw."""
+    conn = get_database_connection()
+
+    try:
+        with conn.cursor() as cur:
+            for table, key_columns in RAW_TABLES.items():
+                cur.execute(f"SELECT COUNT(*) FROM raw.{table}")
+                if cur.fetchone()[0] == 0:
+                    raise AirflowException(
+                        f"A tabela raw.{table} foi carregada sem registros."
+                    )
+
+                key_expression = ", ".join(key_columns)
+                null_predicate = " OR ".join(
+                    f"{column} IS NULL" for column in key_columns
+                )
+                cur.execute(
+                    f"SELECT COUNT(*) FROM raw.{table} "
+                    f"WHERE {null_predicate}"
+                )
+                if cur.fetchone()[0] > 0:
+                    raise AirflowException(
+                        f"A tabela raw.{table} possui chaves nulas."
+                    )
+
+                cur.execute(
+                    f"SELECT {key_expression}, COUNT(*) "
+                    f"FROM raw.{table} "
+                    f"GROUP BY {key_expression} "
+                    f"HAVING COUNT(*) > 1 LIMIT 1"
+                )
+                if cur.fetchone() is not None:
+                    raise AirflowException(
+                        f"A tabela raw.{table} possui chaves duplicadas."
+                    )
+    finally:
+        conn.close()
+
+
+def construir_analytics():
+    """Publica uma visão analítica simples e reproduzível por agência."""
+    conn = get_database_connection()
+
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS analytics.saldo_por_agencia (
+                    cod_agencia BIGINT PRIMARY KEY,
+                    nome_agencia TEXT NOT NULL,
+                    quantidade_contas BIGINT NOT NULL,
+                    saldo_total NUMERIC NOT NULL,
+                    saldo_disponivel NUMERIC NOT NULL,
+                    updated_at TIMESTAMPTZ NOT NULL
+                )
+                """
+            )
+            cur.execute("TRUNCATE TABLE analytics.saldo_por_agencia")
+            cur.execute(
+                """
+                INSERT INTO analytics.saldo_por_agencia (
+                    cod_agencia,
+                    nome_agencia,
+                    quantidade_contas,
+                    saldo_total,
+                    saldo_disponivel,
+                    updated_at
+                )
+                SELECT
+                    a.cod_agencia,
+                    a.nome,
+                    COUNT(c.num_conta),
+                    COALESCE(SUM(c.saldo_total), 0),
+                    COALESCE(SUM(c.saldo_disponivel), 0),
+                    CURRENT_TIMESTAMP
+                FROM raw.agencias AS a
+                LEFT JOIN raw.conta AS c
+                    ON c.cod_agencia = a.cod_agencia
+                GROUP BY a.cod_agencia, a.nome
+                """
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def finalizar_execucao(**context):
     execution_id = context["run_id"]
-    finished_at = datetime.now()
+    finished_at = datetime.now(timezone.utc)
 
     task_states = context["task_instance"].get_task_states(
         dag_id=context["dag"].dag_id,
-        task_ids=["ingestao_meltano"],
+        task_ids=["ingestao_meltano", "validar_raw", "construir_analytics"],
         run_ids=[context["run_id"]],
     )
-    upstream_state = task_states[context["run_id"]]["ingestao_meltano"]
+    states = task_states[context["run_id"]]
+    failed_tasks = [
+        task_id
+        for task_id, state in states.items()
+        if state != "success"
+    ]
 
-    if upstream_state == "success":
+    if not failed_tasks:
         status = "SUCCESS"
         error_message = None
 
@@ -142,10 +245,7 @@ def finalizar_execucao(**context):
         return
 
     status = "FAILED"
-    error_message = (
-        f"Tarefa ingestao_meltano terminou com estado: "
-        f"{upstream_state}"
-    )
+    error_message = f"Tarefas não concluídas com sucesso: {failed_tasks}"
 
     conn = get_database_connection()
 
@@ -215,6 +315,16 @@ with DAG(
         do_xcom_push=False,
     )
 
+    validar_raw_task = PythonOperator(
+        task_id="validar_raw",
+        python_callable=validar_raw,
+    )
+
+    construir_analytics_task = PythonOperator(
+        task_id="construir_analytics",
+        python_callable=construir_analytics,
+    )
+
     finalize_execution = PythonOperator(
         task_id="finalize_execution",
         python_callable=finalizar_execucao,
@@ -222,4 +332,10 @@ with DAG(
         retries=0,
     )
 
-    start_execution >> ingestao_meltano >> finalize_execution
+    (
+        start_execution
+        >> ingestao_meltano
+        >> validar_raw_task
+        >> construir_analytics_task
+        >> finalize_execution
+    )

@@ -4,6 +4,7 @@ USER airflow
 
 RUN pip install --no-cache-dir \
     meltano==4.2.2 \
+    psycopg2-binary \
     apache-airflow-providers-postgres \
     apache-airflow-providers-cncf-kubernetes
 
